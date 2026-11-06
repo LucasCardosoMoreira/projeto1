@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helpdesk IA - Triagem Inteligente</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Lado Esquerdo: Formulário -->
+        <div class="panel left-panel">
+            <div class="header">
+                <h1>Novo Chamado</h1>
+                <p>Descreva seu problema e nossa IA fará a triagem inicial.</p>
+            </div>
+
+            <form id="ticket-form">
+                <div class="form-group">
+                    <label for="ticket-description">Descrição do Problema:</label>
+                    <textarea
+                        id="ticket-description"
+                        rows="6"
+                        placeholder="Ex: Não consigo acessar meu email desde hoje de manhã. O sistema diz senha incorreta."
+                        required
+                    ></textarea>
+                </div>
+                <button type="submit" class="btn primary-btn">Enviar Chamado</button>
+            </form>
+
+            <div id="loading" class="hidden">
+                <div class="spinner"></div>
+                <p>A IA está analisando seu chamado...</p>
+            </div>
+
+            <div id="result-container" class="result-box">
+                <div id="result-content"></div>
+            </div>
+        </div>
+
+        <!-- Lado Direito: Dashboard/Feed -->
+        <div class="panel right-panel">
+            <div class="header flex-between">
+                <h2>Chamados Recentes</h2>
+                <button id="load-tickets-btn" class="btn secondary-btn">Atualizar</button>
+            </div>
+
+            <div id="tickets-feed" class="feed-container">
+                <p>Carregando chamados...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
