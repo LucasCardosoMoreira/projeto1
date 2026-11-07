@@ -189,6 +189,24 @@ textarea:focus {
 .feed-card {
     padding: 1rem;
     border-left-width: 4px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.4s ease;
+}
+
+.new-ticket-highlight {
+    animation: slideFadeIn 0.45s ease-out;
+}
+
+@keyframes slideFadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(-8px);
+        background-color: #eef7ff;
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+        background-color: #ffffff;
+    }
 }
 
 .feed-header {

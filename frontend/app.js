@@ -1,5 +1,8 @@
 const API_BASE_URL = 'https://api-helpdesk-5epp.onrender.com/api'; // URL oficial de produção no Render
 
+// Mantém a lista atual em memória para atualizar suavemente sem "piscar" a tela
+let currentTickets = [];
+
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('ticket-form');
     const loadTicketsBtn = document.getElementById('load-tickets-btn');
@@ -12,10 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
         await submitTicket(description);
     });
 
-    loadTicketsBtn.addEventListener('click', loadRecentTickets);
+    loadTicketsBtn.addEventListener('click', () => loadRecentTickets(false));
 
-    // Load tickets on initial page load
-    loadRecentTickets();
+    // Carrega os chamados na abertura inicial da página
+    loadRecentTickets(true);
 });
 
 async function submitTicket(description) {
@@ -23,7 +26,7 @@ async function submitTicket(description) {
     const loadingDiv = document.getElementById('loading');
     const submitBtn = document.querySelector('button[type="submit"]');
 
-    // Show loading
+    // Show loading no painel esquerdo
     loadingDiv.classList.remove('hidden');
     resultDiv.innerHTML = '';
     submitBtn.disabled = true;
@@ -42,13 +45,23 @@ async function submitTicket(description) {
         }
 
         const data = await response.json();
-        displayResult(data.data);
+        const newTicket = data.data;
+        displayResult(newTicket);
 
-        // Clear form
+        // Limpa o formulário
         document.getElementById('ticket-description').value = '';
 
-        // Refresh ticket list
-        loadRecentTickets();
+        // Insere imediatamente o novo chamado na lista visível (sem apagar os existentes!)
+        if (newTicket) {
+            currentTickets = [
+                ...currentTickets.filter(t => String(t.id) !== String(newTicket.id)),
+                newTicket
+            ];
+            displayTicketsFeed(currentTickets, newTicket.id);
+        }
+
+        // Sincroniza silenciosamente em segundo plano sem limpar a tela
+        loadRecentTickets(false, newTicket ? newTicket.id : null);
 
     } catch (error) {
         console.error("Error submitting ticket:", error);
@@ -77,21 +90,37 @@ function displayResult(data) {
     `;
 }
 
-async function loadRecentTickets() {
+async function loadRecentTickets(isInitialLoad = false, highlightId = null) {
     const feedDiv = document.getElementById('tickets-feed');
-    feedDiv.innerHTML = '<p>Carregando chamados...</p>';
+    const loadTicketsBtn = document.getElementById('load-tickets-btn');
+
+    // Só mostra texto "Carregando chamados..." se a lista ainda estiver vazia na primeira abertura
+    if (isInitialLoad && currentTickets.length === 0) {
+        feedDiv.innerHTML = '<p>Carregando chamados...</p>';
+    } else if (loadTicketsBtn) {
+        loadTicketsBtn.textContent = 'Atualizando...';
+        loadTicketsBtn.disabled = true;
+    }
 
     try {
         const response = await fetch(`${API_BASE_URL}/chamados`);
         if (!response.ok) {
-             throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
-        displayTicketsFeed(data.data);
+        currentTickets = data.data || [];
+        displayTicketsFeed(currentTickets, highlightId);
     } catch (error) {
         console.error("Error loading tickets:", error);
-        feedDiv.innerHTML = `<p style="color: red;">Erro ao carregar chamados.</p>`;
+        if (currentTickets.length === 0) {
+            feedDiv.innerHTML = `<p style="color: red;">Erro ao carregar chamados.</p>`;
+        }
+    } finally {
+        if (loadTicketsBtn) {
+            loadTicketsBtn.textContent = 'Atualizar';
+            loadTicketsBtn.disabled = false;
+        }
     }
 }
 
@@ -105,9 +134,8 @@ function getPriorityWeight(priority) {
     return 5;
 }
 
-function displayTicketsFeed(tickets) {
+function displayTicketsFeed(tickets, highlightId = null) {
     const feedDiv = document.getElementById('tickets-feed');
-    feedDiv.innerHTML = '';
 
     if (!tickets || tickets.length === 0) {
         feedDiv.innerHTML = '<p>Nenhum chamado recente encontrado.</p>';
@@ -121,10 +149,13 @@ function displayTicketsFeed(tickets) {
         return (Number(a.id) || 0) - (Number(b.id) || 0);
     });
 
+    const fragment = document.createDocumentFragment();
+
     sortedTickets.forEach(ticket => {
         const priorityColor = getPriorityColor(ticket.prioridade);
         const card = document.createElement('div');
-        card.className = 'ticket-card feed-card';
+        const isNew = highlightId !== null && String(ticket.id) === String(highlightId);
+        card.className = isNew ? 'ticket-card feed-card new-ticket-highlight' : 'ticket-card feed-card';
         card.style.borderLeftColor = priorityColor;
 
         card.innerHTML = `
@@ -137,8 +168,11 @@ function displayTicketsFeed(tickets) {
                 <span>📁 ${ticket.categoria}</span>
             </div>
         `;
-        feedDiv.appendChild(card);
+        fragment.appendChild(card);
     });
+
+    // Substitui de uma só vez no mesmo quadro de animação, sem deixar a tela vazia
+    feedDiv.replaceChildren(fragment);
 }
 
 function getPriorityColor(priority) {
