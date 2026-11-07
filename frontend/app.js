@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://backend-flask-triage.onrender.com/api'; // Atualizado para a URL de produção
+const API_BASE_URL = 'https://api-helpdesk-5epp.onrender.com/api'; // URL oficial de produção no Render
 
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('ticket-form');
