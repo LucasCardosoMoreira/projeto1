@@ -2,6 +2,7 @@ import os
 import re
 import json
 import urllib.request
+import urllib.error
 import urllib.parse
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -19,14 +20,28 @@ def _get_clean_env(target_key: str) -> str:
         val = val.split("=", 1)[1].strip().strip('"').strip("'").strip("`")
     return val
 
-def _sanitize_postgres_url(url: str) -> str:
-    if not url:
-        return ""
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-    # Remove colchetes acidentais ao redor da senha, ex: :[minhasenha]@ -> :minhasenha@
-    url = re.sub(r":\[([^\]]+)\]@", r":\1@", url)
-    return url
+def _find_postgres_url() -> str:
+    # Procura em DATABASE_URL ou em qualquer variável de ambiente que contenha postgresql:// ou postgres://
+    candidates = [
+        _get_clean_env("DATABASE_URL"),
+        _get_clean_env("SUPABASE_DB_URL"),
+        _get_clean_env("POSTGRES_URL"),
+    ]
+    for _, v in os.environ.items():
+        cleaned = v.strip().strip('"').strip("'").strip("`")
+        if cleaned.startswith("postgresql://") or cleaned.startswith("postgres://"):
+            candidates.append(cleaned)
+
+    for url in candidates:
+        if not url:
+            continue
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        # Remove colchetes acidentais ao redor da senha, ex: :[minhasenha]@ -> :minhasenha@
+        url = re.sub(r":\[([^\]]+)\]@", r":\1@", url)
+        if url.startswith("postgresql://"):
+            return url
+    return ""
 
 def _priority_weight(prioridade: str) -> int:
     if not prioridade:
@@ -50,8 +65,10 @@ def _sort_chamados(lista: list) -> list:
     )
 
 # Configurações de ambiente
-raw_db_url = _sanitize_postgres_url(_get_clean_env("DATABASE_URL"))
+raw_db_url = _find_postgres_url()
 SUPABASE_URL = _get_clean_env("SUPABASE_URL").rstrip("/")
+if SUPABASE_URL.endswith("/rest/v1"):
+    SUPABASE_URL = SUPABASE_URL[:-8].rstrip("/")
 SUPABASE_KEY = _get_clean_env("SUPABASE_KEY")
 
 DB_TYPE = "sqlite"
@@ -59,14 +76,13 @@ DB_DIAGNOSTIC = "init"
 DATABASE_URL = "sqlite:///./local_helpdesk.db"
 engine = None
 
-if raw_db_url.startswith("postgresql://"):
+if raw_db_url:
     try:
         test_engine = create_engine(
             raw_db_url,
             pool_pre_ping=True,
             connect_args={"connect_timeout": 10}
         )
-        # Testar conexão real com o Supabase PostgreSQL
         with test_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         engine = test_engine
@@ -101,13 +117,23 @@ class Chamado(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 def init_db():
-    if DB_TYPE == "supabase_rest":
-        return
     try:
         Base.metadata.create_all(bind=engine)
         print(f"Database initialized successfully ({DB_TYPE}).")
     except Exception as e:
         print(f"Warning during init_db ({DB_TYPE}): {e}")
+
+def _supabase_headers(extra: dict = None) -> dict:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if SUPABASE_KEY.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+    if extra:
+        headers.update(extra)
+    return headers
 
 def _save_via_supabase_rest(descricao: str, categoria: str, prioridade: str, justificativa: str):
     url = f"{SUPABASE_URL}/rest/v1/chamados"
@@ -120,51 +146,52 @@ def _save_via_supabase_rest(descricao: str, categoria: str, prioridade: str, jus
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        },
+        headers=_supabase_headers({"Prefer": "return=representation"}),
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        rows = json.loads(resp.read().decode("utf-8"))
-        row = rows[0] if isinstance(rows, list) and rows else payload
-        return {
-            "id": row.get("id"),
-            "descricao": row.get("descricao", descricao),
-            "categoria": row.get("categoria", categoria),
-            "prioridade": row.get("prioridade", prioridade),
-            "justificativa": row.get("justificativa", justificativa),
-            "created_at": str(row.get("created_at", ""))
-        }
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read().decode("utf-8"))
+            row = rows[0] if isinstance(rows, list) and rows else payload
+            return {
+                "id": row.get("id"),
+                "descricao": row.get("descricao", descricao),
+                "categoria": row.get("categoria", categoria),
+                "prioridade": row.get("prioridade", prioridade),
+                "justificativa": row.get("justificativa", justificativa),
+                "created_at": str(row.get("created_at", ""))
+            }
+    except urllib.error.HTTPError as http_err:
+        err_body = http_err.read().decode("utf-8", errors="ignore")
+        print(f"Supabase REST POST HTTPError ({http_err.code}): {err_body}")
+        raise
 
 def _get_via_supabase_rest(limit: int = 50):
     url = f"{SUPABASE_URL}/rest/v1/chamados?select=*&order=id.asc&limit={limit}"
     req = urllib.request.Request(
         url,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Accept": "application/json"
-        },
+        headers=_supabase_headers(),
         method="GET"
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        rows = json.loads(resp.read().decode("utf-8"))
-        items = [
-            {
-                "id": r.get("id"),
-                "descricao": r.get("descricao", ""),
-                "categoria": r.get("categoria", "Outros"),
-                "prioridade": r.get("prioridade", "Média"),
-                "justificativa": r.get("justificativa", ""),
-                "created_at": str(r.get("created_at", ""))
-            }
-            for r in rows
-        ]
-        return _sort_chamados(items)[:limit]
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read().decode("utf-8"))
+            items = [
+                {
+                    "id": r.get("id"),
+                    "descricao": r.get("descricao", ""),
+                    "categoria": r.get("categoria", "Outros"),
+                    "prioridade": r.get("prioridade", "Média"),
+                    "justificativa": r.get("justificativa", ""),
+                    "created_at": str(r.get("created_at", ""))
+                }
+                for r in rows
+            ]
+            return _sort_chamados(items)[:limit]
+    except urllib.error.HTTPError as http_err:
+        err_body = http_err.read().decode("utf-8", errors="ignore")
+        print(f"Supabase REST GET HTTPError ({http_err.code}): {err_body}")
+        raise
 
 def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa: str):
     if DB_TYPE == "supabase_rest":

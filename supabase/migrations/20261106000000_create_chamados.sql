@@ -1,4 +1,4 @@
--- Migração e limpeza automática da tabela de chamados no Supabase (PostgreSQL)
+-- Migração, permissões e recarregamento de cache de schema no Supabase (PostgreSQL + PostgREST)
 CREATE TABLE IF NOT EXISTS public.chamados (
     id SERIAL PRIMARY KEY,
     descricao TEXT NOT NULL,
@@ -35,5 +35,15 @@ ALTER TABLE public.chamados DROP COLUMN IF EXISTS setor;
 ALTER TABLE public.chamados DROP COLUMN IF EXISTS status;
 ALTER TABLE public.chamados DROP COLUMN IF EXISTS data_criacao;
 
--- Índice para busca rápida dos chamados mais recentes
+-- Índice para busca rápida
 CREATE INDEX IF NOT EXISTS idx_chamados_created_at ON public.chamados (created_at DESC);
+
+-- Garantir permissões para a API do Supabase (PostgREST) e conexão direta
+ALTER TABLE public.chamados DISABLE ROW LEVEL SECURITY;
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.chamados TO postgres, anon, authenticated, service_role;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+-- Recarregar o cache de schema do PostgREST para reconhecer as colunas novas imediatamente
+NOTIFY pgrst, 'reload schema';
+NOTIFY pgrst, 'reload config';
