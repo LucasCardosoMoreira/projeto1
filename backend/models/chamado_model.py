@@ -9,6 +9,8 @@ if not DATABASE_URL:
     # Use a local SQLite db for testing if no URL provided
     DATABASE_URL = "sqlite:///./local_helpdesk.db"
     print("Warning: DATABASE_URL not set. Using local SQLite database.")
+elif DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # SQLAlchemy setup
 engine = create_engine(DATABASE_URL)

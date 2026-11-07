@@ -1,0 +1,40 @@
+name: Supabase Database Migrations
+
+on:
+  push:
+    branches:
+      - main
+      - "main-*"
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/supabase-migrate.yml"
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    name: Aplicar Migrações SQL no Supabase
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar se DATABASE_URL está configurada nos Secrets do GitHub
+        id: check_secret
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::notice::O secret DATABASE_URL ainda não foi configurado no GitHub (Settings -> Secrets and variables -> Actions). Pulando execução via GitHub Actions (o backend no Render ainda criará a tabela automaticamente ao iniciar)."
+            echo "has_secret=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_secret=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Executar arquivos SQL de migração no Supabase
+        if: steps.check_secret.outputs.has_secret == 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          for sql_file in supabase/migrations/*.sql; do
+            echo "Aplicando migração: $sql_file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$sql_file"
+          done

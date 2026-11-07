@@ -27,7 +27,8 @@ def analyze_ticket_with_gemini(descricao: str):
         }
 
     try:
-        model = genai.GenerativeModel('gemini-pro')
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        model = genai.GenerativeModel(model_name)
         prompt = f"""
         Você é um assistente de triagem de chamados de suporte (helpdesk).
         Analise a seguinte descrição de chamado e classifique a 'categoria' e a 'prioridade'.

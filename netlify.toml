@@ -1,0 +1,5 @@
+# Configuração automática de deploy do Frontend no Netlify
+[build]
+  base = "frontend"
+  publish = "."
+  command = "echo 'Frontend estático pronto para publicação'"
