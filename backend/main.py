@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from controllers.chamado_controller import router as chamado_router
-from models.chamado_model import init_db, DB_TYPE
+from models.chamado_model import init_db, DB_TYPE, DB_DIAGNOSTIC
 
 app = FastAPI(title="Helpdesk Triage API")
 
@@ -35,7 +35,8 @@ app.include_router(chamado_router, prefix="/api")
 def read_root():
     return {
         "message": "Helpdesk Triage API is running",
-        "version": "2.1",
+        "version": "2.2",
         "database_mode": DB_TYPE,
+        "database_diagnostic": DB_DIAGNOSTIC,
         "gemini_key_configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())
     }

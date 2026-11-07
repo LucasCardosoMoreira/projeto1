@@ -1,5 +1,9 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+import re
+import json
+import urllib.request
+import urllib.parse
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 
@@ -10,32 +14,77 @@ def _get_clean_env(target_key: str) -> str:
             if k.strip().upper() == target_key.upper():
                 val = v
                 break
-    return val.strip().strip('"').strip("'")
+    val = val.strip().strip('"').strip("'").strip("`").strip()
+    if val.upper().startswith(f"{target_key.upper()}="):
+        val = val.split("=", 1)[1].strip().strip('"').strip("'").strip("`")
+    return val
 
-# Database Configuration (Supabase PostgreSQL)
-raw_db_url = _get_clean_env("DATABASE_URL")
+def _sanitize_postgres_url(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    # Remove colchetes acidentais ao redor da senha, ex: :[minhasenha]@ -> :minhasenha@
+    url = re.sub(r":\[([^\]]+)\]@", r":\1@", url)
+    return url
 
-if not raw_db_url:
-    # Use a local SQLite db for testing if no URL provided
-    DATABASE_URL = "sqlite:///./local_helpdesk.db"
-    DB_TYPE = "sqlite"
-    print("Warning: DATABASE_URL not set. Using local SQLite database.")
-else:
-    if raw_db_url.startswith("postgres://"):
-        raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
-    DATABASE_URL = raw_db_url
-    DB_TYPE = "supabase_postgres"
+def _priority_weight(prioridade: str) -> int:
+    if not prioridade:
+        return 5
+    p = prioridade.lower().strip()
+    if "crítica" in p or "critica" in p:
+        return 1
+    if "alta" in p:
+        return 2
+    if "média" in p or "media" in p:
+        return 3
+    if "baixa" in p:
+        return 4
+    return 5
 
-# SQLAlchemy setup
-try:
-    if DB_TYPE == "supabase_postgres":
-        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-    else:
-        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-except Exception as e:
-    print(f"Error creating database engine ({DB_TYPE}): {e}. Falling back to SQLite.")
-    DATABASE_URL = "sqlite:///./local_helpdesk.db"
-    DB_TYPE = "sqlite_fallback"
+def _sort_chamados(lista: list) -> list:
+    """Ordena por: 1º Prioridade (Crítica > Alta > Média > Baixa), 2º Menor ID (mais antigo primeiro)."""
+    return sorted(
+        lista,
+        key=lambda c: (_priority_weight(c.get("prioridade", "")), int(c.get("id") or 0))
+    )
+
+# Configurações de ambiente
+raw_db_url = _sanitize_postgres_url(_get_clean_env("DATABASE_URL"))
+SUPABASE_URL = _get_clean_env("SUPABASE_URL").rstrip("/")
+SUPABASE_KEY = _get_clean_env("SUPABASE_KEY")
+
+DB_TYPE = "sqlite"
+DB_DIAGNOSTIC = "init"
+DATABASE_URL = "sqlite:///./local_helpdesk.db"
+engine = None
+
+if raw_db_url.startswith("postgresql://"):
+    try:
+        test_engine = create_engine(
+            raw_db_url,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": 10}
+        )
+        # Testar conexão real com o Supabase PostgreSQL
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine = test_engine
+        DATABASE_URL = raw_db_url
+        DB_TYPE = "supabase_postgres"
+        DB_DIAGNOSTIC = "connected_via_database_url"
+        print("Connected successfully to Supabase PostgreSQL via DATABASE_URL.")
+    except Exception as e:
+        DB_DIAGNOSTIC = f"postgres_error: {str(e)}"
+        print(f"Warning: Failed connecting via DATABASE_URL ({e}).")
+
+if engine is None and SUPABASE_URL.startswith("http") and SUPABASE_KEY:
+    DB_TYPE = "supabase_rest"
+    if DB_DIAGNOSTIC == "init":
+        DB_DIAGNOSTIC = "connected_via_supabase_rest"
+    print("Using Supabase REST API (SUPABASE_URL + SUPABASE_KEY) for persistence.")
+
+if engine is None:
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -52,13 +101,78 @@ class Chamado(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 def init_db():
+    if DB_TYPE == "supabase_rest":
+        return
     try:
         Base.metadata.create_all(bind=engine)
         print(f"Database initialized successfully ({DB_TYPE}).")
     except Exception as e:
         print(f"Warning during init_db ({DB_TYPE}): {e}")
 
+def _save_via_supabase_rest(descricao: str, categoria: str, prioridade: str, justificativa: str):
+    url = f"{SUPABASE_URL}/rest/v1/chamados"
+    payload = {
+        "descricao": descricao,
+        "categoria": categoria,
+        "prioridade": prioridade,
+        "justificativa": justificativa
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        rows = json.loads(resp.read().decode("utf-8"))
+        row = rows[0] if isinstance(rows, list) and rows else payload
+        return {
+            "id": row.get("id"),
+            "descricao": row.get("descricao", descricao),
+            "categoria": row.get("categoria", categoria),
+            "prioridade": row.get("prioridade", prioridade),
+            "justificativa": row.get("justificativa", justificativa),
+            "created_at": str(row.get("created_at", ""))
+        }
+
+def _get_via_supabase_rest(limit: int = 50):
+    url = f"{SUPABASE_URL}/rest/v1/chamados?select=*&order=id.asc&limit={limit}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Accept": "application/json"
+        },
+        method="GET"
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        rows = json.loads(resp.read().decode("utf-8"))
+        items = [
+            {
+                "id": r.get("id"),
+                "descricao": r.get("descricao", ""),
+                "categoria": r.get("categoria", "Outros"),
+                "prioridade": r.get("prioridade", "Média"),
+                "justificativa": r.get("justificativa", ""),
+                "created_at": str(r.get("created_at", ""))
+            }
+            for r in rows
+        ]
+        return _sort_chamados(items)[:limit]
+
 def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa: str):
+    if DB_TYPE == "supabase_rest":
+        try:
+            return _save_via_supabase_rest(descricao, categoria, prioridade, justificativa)
+        except Exception as e:
+            print(f"Error saving via Supabase REST: {e}")
+
     db = SessionLocal()
     try:
         novo_chamado = Chamado(
@@ -78,14 +192,26 @@ def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa:
             "justificativa": novo_chamado.justificativa,
             "created_at": str(novo_chamado.created_at)
         }
+    except Exception as e:
+        db.rollback()
+        if SUPABASE_URL.startswith("http") and SUPABASE_KEY:
+            print(f"SQLAlchemy save failed ({e}), falling back to Supabase REST API.")
+            return _save_via_supabase_rest(descricao, categoria, prioridade, justificativa)
+        raise
     finally:
         db.close()
 
-def get_recent_chamados(limit: int = 10):
+def get_recent_chamados(limit: int = 50):
+    if DB_TYPE == "supabase_rest":
+        try:
+            return _get_via_supabase_rest(limit)
+        except Exception as e:
+            print(f"Error fetching via Supabase REST: {e}")
+
     db = SessionLocal()
     try:
-        chamados = db.query(Chamado).order_by(Chamado.created_at.desc()).limit(limit).all()
-        return [
+        chamados = db.query(Chamado).order_by(Chamado.id.asc()).limit(limit).all()
+        items = [
             {
                 "id": c.id,
                 "descricao": c.descricao,
@@ -96,5 +222,11 @@ def get_recent_chamados(limit: int = 10):
             }
             for c in chamados
         ]
+        return _sort_chamados(items)[:limit]
+    except Exception as e:
+        if SUPABASE_URL.startswith("http") and SUPABASE_KEY:
+            print(f"SQLAlchemy fetch failed ({e}), falling back to Supabase REST API.")
+            return _get_via_supabase_rest(limit)
+        raise
     finally:
         db.close()

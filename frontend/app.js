@@ -95,6 +95,16 @@ async function loadRecentTickets() {
     }
 }
 
+function getPriorityWeight(priority) {
+    if (!priority) return 5;
+    const p = priority.toLowerCase().trim();
+    if (p.includes('crítica') || p.includes('critica')) return 1;
+    if (p.includes('alta')) return 2;
+    if (p.includes('média') || p.includes('media')) return 3;
+    if (p.includes('baixa')) return 4;
+    return 5;
+}
+
 function displayTicketsFeed(tickets) {
     const feedDiv = document.getElementById('tickets-feed');
     feedDiv.innerHTML = '';
@@ -104,7 +114,14 @@ function displayTicketsFeed(tickets) {
         return;
     }
 
-    tickets.forEach(ticket => {
+    // Ordenar: 1º Prioridade (Crítica > Alta > Média > Baixa), 2º Menor ID no topo (feito primeiro)
+    const sortedTickets = [...tickets].sort((a, b) => {
+        const weightDiff = getPriorityWeight(a.prioridade) - getPriorityWeight(b.prioridade);
+        if (weightDiff !== 0) return weightDiff;
+        return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+
+    sortedTickets.forEach(ticket => {
         const priorityColor = getPriorityColor(ticket.prioridade);
         const card = document.createElement('div');
         card.className = 'ticket-card feed-card';
