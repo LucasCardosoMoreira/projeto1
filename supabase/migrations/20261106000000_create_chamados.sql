@@ -1,4 +1,4 @@
--- Migração e sincronização da tabela de chamados no Supabase (PostgreSQL)
+-- Migração e sincronização automática da tabela de chamados no Supabase (PostgreSQL)
 CREATE TABLE IF NOT EXISTS public.chamados (
     id SERIAL PRIMARY KEY,
     setor TEXT NOT NULL DEFAULT 'Geral',
