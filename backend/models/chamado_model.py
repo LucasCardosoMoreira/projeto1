@@ -3,17 +3,41 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 
+def _get_clean_env(target_key: str) -> str:
+    val = os.environ.get(target_key, "")
+    if not val:
+        for k, v in os.environ.items():
+            if k.strip().upper() == target_key.upper():
+                val = v
+                break
+    return val.strip().strip('"').strip("'")
+
 # Database Configuration (Supabase PostgreSQL)
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
+raw_db_url = _get_clean_env("DATABASE_URL")
+
+if not raw_db_url:
     # Use a local SQLite db for testing if no URL provided
     DATABASE_URL = "sqlite:///./local_helpdesk.db"
+    DB_TYPE = "sqlite"
     print("Warning: DATABASE_URL not set. Using local SQLite database.")
-elif DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+else:
+    if raw_db_url.startswith("postgres://"):
+        raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = raw_db_url
+    DB_TYPE = "supabase_postgres"
 
 # SQLAlchemy setup
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+try:
+    if DB_TYPE == "supabase_postgres":
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    else:
+        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+except Exception as e:
+    print(f"Error creating database engine ({DB_TYPE}): {e}. Falling back to SQLite.")
+    DATABASE_URL = "sqlite:///./local_helpdesk.db"
+    DB_TYPE = "sqlite_fallback"
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -28,7 +52,11 @@ class Chamado(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        print(f"Database initialized successfully ({DB_TYPE}).")
+    except Exception as e:
+        print(f"Warning during init_db ({DB_TYPE}): {e}")
 
 def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa: str):
     db = SessionLocal()
