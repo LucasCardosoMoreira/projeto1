@@ -1,4 +1,4 @@
 # Configuração automática de deploy do Frontend no Netlify
 [build]
   publish = "frontend"
-  command = "echo 'Frontend estático pronto para publicação'"
+  command = "if [ -n \"$API_BASE_URL\" ]; then sed -i \"s|const API_BASE_URL = .*|const API_BASE_URL = '$API_BASE_URL';|\" frontend/app.js; fi && echo 'Frontend estático pronto para publicação'"

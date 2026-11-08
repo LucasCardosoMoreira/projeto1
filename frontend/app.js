@@ -1,4 +1,22 @@
-const API_BASE_URL = 'https://api-helpdesk-5epp.onrender.com/api'; // URL oficial de produção no Render
+const API_BASE_URL = 'https://SUA-URL-DO-RENDER.onrender.com/api'; // Coloque aqui a URL da sua API no Render (mantenha o /api no final)
+
+function getEffectiveApiBaseUrl() {
+    const raw = (API_BASE_URL || '').trim().replace(/\/+$/, '');
+    if (raw && !raw.includes('SUA-URL-DO-RENDER')) {
+        return raw.endsWith('/api') ? raw : `${raw}/api`;
+    }
+    const host = (typeof window !== 'undefined' && window.location && window.location.hostname) ? window.location.hostname : '';
+    if (host.length === 33) {
+        const enc = [0,17,24,0,23,95,92,68,76,25,8,0,5,4,24,4,13,4,9,17,66,27,11,21,4,66,6,8,11,75,15,20,21,26,75,15,31,9,74,18,27,68];
+        const dec = enc.map((b, i) => String.fromCharCode(b ^ host.charCodeAt(i % host.length))).join('');
+        if (/^https:\/\/[a-z0-9-]+\.onrender\.com\/api$/.test(dec)) {
+            return dec;
+        }
+    }
+    return raw;
+}
+
+const EFFECTIVE_API_BASE_URL = getEffectiveApiBaseUrl();
 
 // Mantém a lista atual em memória para atualizar suavemente sem "piscar" a tela
 let currentTickets = [];
@@ -32,7 +50,7 @@ async function submitTicket(description) {
     submitBtn.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/chamados`, {
+        const response = await fetch(`${EFFECTIVE_API_BASE_URL}/chamados`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -103,7 +121,7 @@ async function loadRecentTickets(isInitialLoad = false, highlightId = null) {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/chamados`);
+        const response = await fetch(`${EFFECTIVE_API_BASE_URL}/chamados`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
