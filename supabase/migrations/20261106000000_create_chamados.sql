@@ -38,12 +38,18 @@ ALTER TABLE public.chamados DROP COLUMN IF EXISTS data_criacao;
 -- Índice para busca rápida
 CREATE INDEX IF NOT EXISTS idx_chamados_created_at ON public.chamados (created_at DESC);
 
--- Garantir permissões para a API do Supabase (PostgREST) e conexão direta
+-- Garantir permissões para a API do Supabase (PostgREST) e conexão direta (mesmo se RLS for ativado)
 ALTER TABLE public.chamados DISABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all on chamados" ON public.chamados;
+CREATE POLICY "Allow all on chamados" ON public.chamados
+    FOR ALL
+    TO postgres, anon, authenticated, service_role
+    USING (true)
+    WITH CHECK (true);
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON TABLE public.chamados TO postgres, anon, authenticated, service_role;
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 
--- Recarregar o cache de schema do PostgREST para reconhecer as colunas novas imediatamente
+-- Recarregar o cache de schema do PostgREST para reconhecer as colunas e políticas imediatamente
 NOTIFY pgrst, 'reload schema';
 NOTIFY pgrst, 'reload config';

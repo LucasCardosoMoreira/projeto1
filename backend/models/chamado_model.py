@@ -29,7 +29,7 @@ def _find_postgres_url() -> str:
     ]
     for _, v in os.environ.items():
         cleaned = v.strip().strip('"').strip("'").strip("`")
-        if cleaned.startswith("postgresql://") or cleaned.startswith("postgres://"):
+        if cleaned.startswith("postgresql") or cleaned.startswith("postgres://"):
             candidates.append(cleaned)
 
     for url in candidates:
@@ -39,7 +39,7 @@ def _find_postgres_url() -> str:
             url = url.replace("postgres://", "postgresql://", 1)
         # Remove colchetes acidentais ao redor da senha, ex: :[minhasenha]@ -> :minhasenha@
         url = re.sub(r":\[([^\]]+)\]@", r":\1@", url)
-        if url.startswith("postgresql://"):
+        if url.startswith("postgresql"):
             return url
     return ""
 
@@ -77,22 +77,36 @@ DATABASE_URL = "sqlite:///./local_helpdesk.db"
 engine = None
 
 if raw_db_url:
-    engine = create_engine(
+    base_pg_url = re.sub(r"^postgresql(\+[a-z0-9_]+)?://", "postgresql://", raw_db_url)
+    driver_urls = [
         raw_db_url,
-        pool_pre_ping=True,
-        pool_recycle=180,
-        connect_args={"connect_timeout": 10}
-    )
-    DATABASE_URL = raw_db_url
-    DB_TYPE = "supabase_postgres"
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        DB_DIAGNOSTIC = "connected_via_database_url"
-        print("Connected successfully to Supabase PostgreSQL via DATABASE_URL.")
-    except Exception as e:
-        DB_DIAGNOSTIC = f"postgres_boot_warning: {str(e)}"
-        print(f"Warning: Initial ping via DATABASE_URL failed ({e}), will retry on requests.")
+        base_pg_url.replace("postgresql://", "postgresql+psycopg2://", 1),
+        base_pg_url.replace("postgresql://", "postgresql+psycopg://", 1),
+    ]
+    seen_urls = []
+    for u in driver_urls:
+        if u not in seen_urls:
+            seen_urls.append(u)
+
+    for candidate_url in seen_urls:
+        try:
+            test_engine = create_engine(
+                candidate_url,
+                pool_pre_ping=True,
+                pool_recycle=180,
+                connect_args={"connect_timeout": 10}
+            )
+            with test_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            engine = test_engine
+            DATABASE_URL = candidate_url
+            DB_TYPE = "supabase_postgres"
+            DB_DIAGNOSTIC = "connected_via_database_url"
+            print("Connected successfully to Supabase PostgreSQL via DATABASE_URL.")
+            break
+        except Exception as e:
+            DB_DIAGNOSTIC = f"postgres_error: {str(e)}"
+            print(f"Warning: Failed connecting via DATABASE_URL candidate ({e}).")
 
 if engine is None and SUPABASE_URL.startswith("http") and SUPABASE_KEY:
     DB_TYPE = "supabase_rest"
