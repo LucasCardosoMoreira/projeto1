@@ -78,8 +78,8 @@ async function submitTicket(description) {
             displayTicketsFeed(currentTickets, newTicket.id);
         }
 
-        // Sincroniza silenciosamente em segundo plano sem limpar a tela
-        loadRecentTickets(false, newTicket ? newTicket.id : null);
+        // Sincroniza silenciosamente em segundo plano sem repetir a animação nem piscar o botão
+        loadRecentTickets(false, null, true);
 
     } catch (error) {
         console.error("Error submitting ticket:", error);
@@ -108,14 +108,14 @@ function displayResult(data) {
     `;
 }
 
-async function loadRecentTickets(isInitialLoad = false, highlightId = null) {
+async function loadRecentTickets(isInitialLoad = false, highlightId = null, isSilentSync = false) {
     const feedDiv = document.getElementById('tickets-feed');
     const loadTicketsBtn = document.getElementById('load-tickets-btn');
 
     // Só mostra texto "Carregando chamados..." se a lista ainda estiver vazia na primeira abertura
     if (isInitialLoad && currentTickets.length === 0) {
         feedDiv.innerHTML = '<p>Carregando chamados...</p>';
-    } else if (loadTicketsBtn) {
+    } else if (loadTicketsBtn && !isSilentSync) {
         loadTicketsBtn.textContent = 'Atualizando...';
         loadTicketsBtn.disabled = true;
     }
@@ -135,7 +135,7 @@ async function loadRecentTickets(isInitialLoad = false, highlightId = null) {
             feedDiv.innerHTML = `<p style="color: red;">Erro ao carregar chamados.</p>`;
         }
     } finally {
-        if (loadTicketsBtn) {
+        if (loadTicketsBtn && !isSilentSync) {
             loadTicketsBtn.textContent = 'Atualizar';
             loadTicketsBtn.disabled = false;
         }
@@ -167,29 +167,59 @@ function displayTicketsFeed(tickets, highlightId = null) {
         return (Number(a.id) || 0) - (Number(b.id) || 0);
     });
 
+    const existingCards = new Map();
+    const currentOrderIds = [];
+    feedDiv.querySelectorAll('.feed-card[data-ticket-id]').forEach(el => {
+        const tid = el.getAttribute('data-ticket-id');
+        existingCards.set(tid, el);
+        currentOrderIds.push(tid);
+    });
+
+    const targetOrderIds = sortedTickets.map(t => String(t.id));
+    const isSameOrder =
+        highlightId === null &&
+        currentOrderIds.length === targetOrderIds.length &&
+        currentOrderIds.every((id, idx) => id === targetOrderIds[idx]);
+
+    // Se a sincronização em segundo plano trouxe exatamente a mesma lista já visível, não toca no DOM
+    if (isSameOrder) {
+        return;
+    }
+
     const fragment = document.createDocumentFragment();
 
     sortedTickets.forEach(ticket => {
+        const ticketIdStr = String(ticket.id);
         const priorityColor = getPriorityColor(ticket.prioridade);
-        const card = document.createElement('div');
-        const isNew = highlightId !== null && String(ticket.id) === String(highlightId);
-        card.className = isNew ? 'ticket-card feed-card new-ticket-highlight' : 'ticket-card feed-card';
-        card.style.borderLeftColor = priorityColor;
+        let card = existingCards.get(ticketIdStr);
 
-        card.innerHTML = `
-            <div class="feed-header">
-                <strong>ID: #${ticket.id}</strong>
-                <span class="badge" style="background-color: ${priorityColor}">${ticket.prioridade}</span>
-            </div>
-            <p class="feed-desc">"${ticket.descricao}"</p>
-            <div class="feed-meta">
-                <span>📁 ${ticket.categoria}</span>
-            </div>
-        `;
+        if (!card) {
+            card = document.createElement('div');
+            card.setAttribute('data-ticket-id', ticketIdStr);
+            const isNew = highlightId !== null && ticketIdStr === String(highlightId);
+            card.className = isNew ? 'ticket-card feed-card new-ticket-highlight' : 'ticket-card feed-card';
+            if (isNew) {
+                card.addEventListener('animationend', () => {
+                    card.classList.remove('new-ticket-highlight');
+                }, { once: true });
+            }
+            card.style.borderLeftColor = priorityColor;
+            card.innerHTML = `
+                <div class="feed-header">
+                    <strong>ID: #${ticket.id}</strong>
+                    <span class="badge" style="background-color: ${priorityColor}">${ticket.prioridade}</span>
+                </div>
+                <p class="feed-desc">"${ticket.descricao}"</p>
+                <div class="feed-meta">
+                    <span>📁 ${ticket.categoria}</span>
+                </div>
+            `;
+        }
+
         fragment.appendChild(card);
     });
 
-    // Substitui de uma só vez no mesmo quadro de animação, sem deixar a tela vazia
+    // Atualiza preservando as instâncias DOM dos cards já existentes
     feedDiv.replaceChildren(fragment);
 }
 
