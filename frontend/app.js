@@ -127,7 +127,14 @@ async function loadRecentTickets(isInitialLoad = false, highlightId = null, isSi
         }
 
         const data = await response.json();
-        currentTickets = data.data || [];
+        const fetchedTickets = data.data || [];
+        if (isSilentSync && currentTickets.length > 0) {
+            const fetchedIds = new Set(fetchedTickets.map(t => String(t.id)));
+            const missingLocal = currentTickets.filter(t => !fetchedIds.has(String(t.id)));
+            currentTickets = [...fetchedTickets, ...missingLocal];
+        } else {
+            currentTickets = fetchedTickets;
+        }
         displayTicketsFeed(currentTickets, highlightId);
     } catch (error) {
         console.error("Error loading tickets:", error);
@@ -144,7 +151,7 @@ async function loadRecentTickets(isInitialLoad = false, highlightId = null, isSi
 
 function getPriorityWeight(priority) {
     if (!priority) return 5;
-    const p = priority.toLowerCase().trim();
+    const p = String(priority).toLowerCase().trim();
     if (p.includes('crítica') || p.includes('critica')) return 1;
     if (p.includes('alta')) return 2;
     if (p.includes('média') || p.includes('media')) return 3;
@@ -207,11 +214,11 @@ function displayTicketsFeed(tickets, highlightId = null) {
             card.innerHTML = `
                 <div class="feed-header">
                     <strong>ID: #${ticket.id}</strong>
-                    <span class="badge" style="background-color: ${priorityColor}">${ticket.prioridade}</span>
+                    <span class="badge" style="background-color: ${priorityColor}">${ticket.prioridade || 'Média'}</span>
                 </div>
-                <p class="feed-desc">"${ticket.descricao}"</p>
+                <p class="feed-desc">"${ticket.descricao || ''}"</p>
                 <div class="feed-meta">
-                    <span>📁 ${ticket.categoria}</span>
+                    <span>📁 ${ticket.categoria || 'Outros'}</span>
                 </div>
             `;
         }
@@ -224,7 +231,7 @@ function displayTicketsFeed(tickets, highlightId = null) {
 }
 
 function getPriorityColor(priority) {
-    const p = priority.toLowerCase();
+    const p = String(priority || '').toLowerCase();
     if (p.includes('baixa')) return '#4caf50'; // Green
     if (p.includes('média') || p.includes('media')) return '#ff9800'; // Orange
     if (p.includes('alta')) return '#f44336'; // Red

@@ -77,22 +77,22 @@ DATABASE_URL = "sqlite:///./local_helpdesk.db"
 engine = None
 
 if raw_db_url:
+    engine = create_engine(
+        raw_db_url,
+        pool_pre_ping=True,
+        pool_recycle=180,
+        connect_args={"connect_timeout": 10}
+    )
+    DATABASE_URL = raw_db_url
+    DB_TYPE = "supabase_postgres"
     try:
-        test_engine = create_engine(
-            raw_db_url,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 10}
-        )
-        with test_engine.connect() as conn:
+        with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        engine = test_engine
-        DATABASE_URL = raw_db_url
-        DB_TYPE = "supabase_postgres"
         DB_DIAGNOSTIC = "connected_via_database_url"
         print("Connected successfully to Supabase PostgreSQL via DATABASE_URL.")
     except Exception as e:
-        DB_DIAGNOSTIC = f"postgres_error: {str(e)}"
-        print(f"Warning: Failed connecting via DATABASE_URL ({e}).")
+        DB_DIAGNOSTIC = f"postgres_boot_warning: {str(e)}"
+        print(f"Warning: Initial ping via DATABASE_URL failed ({e}), will retry on requests.")
 
 if engine is None and SUPABASE_URL.startswith("http") and SUPABASE_KEY:
     DB_TYPE = "supabase_rest"
@@ -179,11 +179,11 @@ def _get_via_supabase_rest(limit: int = 50):
             items = [
                 {
                     "id": r.get("id"),
-                    "descricao": r.get("descricao", ""),
-                    "categoria": r.get("categoria", "Outros"),
-                    "prioridade": r.get("prioridade", "Média"),
-                    "justificativa": r.get("justificativa", ""),
-                    "created_at": str(r.get("created_at", ""))
+                    "descricao": r.get("descricao") or "",
+                    "categoria": r.get("categoria") or "Outros",
+                    "prioridade": r.get("prioridade") or "Média",
+                    "justificativa": r.get("justificativa") or "",
+                    "created_at": str(r.get("created_at") or "")
                 }
                 for r in rows
             ]
@@ -195,10 +195,7 @@ def _get_via_supabase_rest(limit: int = 50):
 
 def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa: str):
     if DB_TYPE == "supabase_rest":
-        try:
-            return _save_via_supabase_rest(descricao, categoria, prioridade, justificativa)
-        except Exception as e:
-            print(f"Error saving via Supabase REST: {e}")
+        return _save_via_supabase_rest(descricao, categoria, prioridade, justificativa)
 
     db = SessionLocal()
     try:
@@ -213,11 +210,11 @@ def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa:
         db.refresh(novo_chamado)
         return {
             "id": novo_chamado.id,
-            "descricao": novo_chamado.descricao,
-            "categoria": novo_chamado.categoria,
-            "prioridade": novo_chamado.prioridade,
-            "justificativa": novo_chamado.justificativa,
-            "created_at": str(novo_chamado.created_at)
+            "descricao": novo_chamado.descricao or "",
+            "categoria": novo_chamado.categoria or "Outros",
+            "prioridade": novo_chamado.prioridade or "Média",
+            "justificativa": novo_chamado.justificativa or "",
+            "created_at": str(novo_chamado.created_at or "")
         }
     except Exception as e:
         db.rollback()
@@ -230,10 +227,7 @@ def save_chamado(descricao: str, categoria: str, prioridade: str, justificativa:
 
 def get_recent_chamados(limit: int = 50):
     if DB_TYPE == "supabase_rest":
-        try:
-            return _get_via_supabase_rest(limit)
-        except Exception as e:
-            print(f"Error fetching via Supabase REST: {e}")
+        return _get_via_supabase_rest(limit)
 
     db = SessionLocal()
     try:
@@ -241,11 +235,11 @@ def get_recent_chamados(limit: int = 50):
         items = [
             {
                 "id": c.id,
-                "descricao": c.descricao,
-                "categoria": c.categoria,
-                "prioridade": c.prioridade,
-                "justificativa": c.justificativa,
-                "created_at": str(c.created_at)
+                "descricao": c.descricao or "",
+                "categoria": c.categoria or "Outros",
+                "prioridade": c.prioridade or "Média",
+                "justificativa": c.justificativa or "",
+                "created_at": str(c.created_at or "")
             }
             for c in chamados
         ]

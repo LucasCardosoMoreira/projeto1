@@ -31,7 +31,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def restrict_official_instance_origin(request: Request, call_next):
-    if request.url.path.startswith("/api") and request.method != "OPTIONS":
+    if request.url.path.startswith("/api") and request.method == "POST":
         raw_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
         host_only = raw_host.split(":")[0]
         if hashlib.sha256(host_only.encode("utf-8")).hexdigest() == _PROTECTED_HOST_HASH:
